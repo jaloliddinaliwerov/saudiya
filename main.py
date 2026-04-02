@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 
 # 🔐 Admin va ruxsatli foydalanuvchilar
 ADMINS = [6734269605, 7652431781]  # adminlar IDlari
-PERMITTED_USERS = [7652431781, 5914041389, 5479874937, 7652431781, 6734269605]  # pul qo‘sha oladiganlar
+PERMITTED_USERS = [7652431781, 5914041389, 5479874937, 7652431781, 6734269605]  # pul qo‘sha oladiganlar (admin ham shu yerda bo‘lsa qo‘sha oladi)
 
 # 🗄 DB
 conn = psycopg2.connect(DB_URL)
@@ -51,45 +51,35 @@ user_state = {}
 # ----- START -----
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
-    if message.from_user.id not in ADMINS + PERMITTED_USERS:
+    user_id = message.from_user.id
+    # User ruxsatini tekshirish
+    if user_id not in PERMITTED_USERS + ADMINS:
         await message.answer("❌ Sizda ruxsat yo‘q")
         return
-    cur.execute("SELECT * FROM users WHERE user_id=%s", (message.from_user.id,))
+
+    # Ism so‘rash
+    cur.execute("SELECT * FROM users WHERE user_id=%s", (user_id,))
     if not cur.fetchone():
         await message.answer("👤 Ismingizni kiriting:")
-        user_state[message.from_user.id] = "name"
-    else:
-        await message.answer("Xush kelibsiz!", reply_markup=main_kb)
-# ----- ADMIN PANEL -----
-@dp.message_handler(commands=['admin'])
-async def admin_panel(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        await message.answer("❌ Siz admin emassiz")
-        return
-    kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("➕ Foydalanuvchi qo‘shish", callback_data="add_user"),
-        InlineKeyboardButton("💰 Limit o‘rnatish", callback_data="set_limit"),
-        InlineKeyboardButton("📊 Jami pul", callback_data="total_money")
-    )
-    await message.answer("🔹 Admin panel:", reply_markup=kb)
-
-# ----- CALLBACKS -----
-@dp.callback_query_handler(lambda c: c.data in ["add_user","set_limit","total_money"])
-async def process_admin_callback(callback: types.CallbackQuery):
-    if callback.from_user.id not in ADMINS:
-        await callback.answer("❌ Siz admin emassiz", show_alert=True)
+        user_state[user_id] = "name"
         return
 
-    if callback.data == "add_user":
-        await bot.send_message(callback.from_user.id, "Foydalanuvchi ID sini kiriting: /adduser 123456789")
-    elif callback.data == "set_limit":
-        await bot.send_message(callback.from_user.id, "Limitni kiriting: /setlimit 5000000")
-    elif callback.data == "total_money":
-        cur.execute("SELECT SUM(naqd+karta) FROM money")
-        total = cur.fetchone()[0] or 0
-        await bot.send_message(callback.from_user.id, f"💰 Jami yig‘ilgan pul: {total}")
-    await callback.answer()  # tugmani bosgandan keyin "loading" ni olib tashlaydi
+    # Tugmalar tayyorlash
+    kb = main_kb
+    text = "Xush kelibsiz!"
+    await message.answer(text, reply_markup=kb)
+
+    # Agar admin bo‘lsa → admin panel qo‘shish
+    if user_id in ADMINS:
+        admin_kb = InlineKeyboardMarkup(row_width=1)
+        admin_kb.add(
+            InlineKeyboardButton("➕ Foydalanuvchi qo‘shish", callback_data="add_user"),
+            InlineKeyboardButton("💰 Limit o‘rnatish", callback_data="set_limit"),
+            InlineKeyboardButton("📊 Jami pul", callback_data="total_money")
+        )
+        await message.answer("🔹 Admin panel:", reply_markup=admin_kb)
+
+# ----- NAME SAVE -----
 @dp.message_handler(lambda m: m.from_user.id in user_state and user_state[m.from_user.id]=="name")
 async def save_name(message: types.Message):
     cur.execute("INSERT INTO users VALUES (%s,%s)", (message.from_user.id, message.text))
@@ -222,29 +212,22 @@ async def remaining_limit(message: types.Message):
     remaining = total_limit - current_total
     await message.answer(f"💰 Qolgan limit: {remaining}")
 
-# ----- ADMIN INLINE PANEL -----
-@dp.message_handler(commands=['admin'])
-async def admin_panel(message: types.Message):
-    if message.from_user.id not in ADMINS:
-        return
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("➕ Foydalanuvchi qo‘shish", callback_data="adduser"))
-    kb.add(InlineKeyboardButton("💰 Limit o‘rnatish", callback_data="setlimit"))
-    kb.add(InlineKeyboardButton("📊 Jami pul", callback_data="totalmoney"))
-    await message.answer("🔹 Admin panel:", reply_markup=kb)
-
-@dp.callback_query_handler(lambda c: c.data in ["adduser","setlimit","totalmoney"])
-async def admin_actions(callback: types.CallbackQuery):
+# ----- ADMIN CALLBACKS -----
+@dp.callback_query_handler(lambda c: c.data in ["add_user","set_limit","total_money"])
+async def process_admin_callback(callback: types.CallbackQuery):
     if callback.from_user.id not in ADMINS:
+        await callback.answer("❌ Siz admin emassiz", show_alert=True)
         return
-    if callback.data=="adduser":
-        await bot.send_message(callback.from_user.id, "ID kiriting: /adduser 123456789")
-    elif callback.data=="setlimit":
-        await bot.send_message(callback.from_user.id, "Limit kiriting: /setlimit 5000000")
-    elif callback.data=="totalmoney":
+
+    if callback.data == "add_user":
+        await bot.send_message(callback.from_user.id, "Foydalanuvchi ID sini kiriting: /adduser 123456789")
+    elif callback.data == "set_limit":
+        await bot.send_message(callback.from_user.id, "Limitni kiriting: /setlimit 5000000")
+    elif callback.data == "total_money":
         cur.execute("SELECT SUM(naqd+karta) FROM money")
         total = cur.fetchone()[0] or 0
         await bot.send_message(callback.from_user.id, f"💰 Jami yig‘ilgan pul: {total}")
+    await callback.answer()
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True)
