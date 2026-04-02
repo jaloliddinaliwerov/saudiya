@@ -13,8 +13,8 @@ dp = Dispatcher(bot)
 logging.basicConfig(level=logging.INFO)
 
 # 🔐 Admin va ruxsatli foydalanuvchilar
-ADMINS = [6734269605, 7652431781]  # adminlar IDlari
-PERMITTED_USERS = [7652431781, 5914041389, 5479874937, 7652431781, 6734269605]  # pul qo‘sha oladiganlar (admin ham shu yerda bo‘lsa qo‘sha oladi)
+ADMINS = [6734269605, 7652431781]          # adminlar ID
+PERMITTED_USERS = [7652431781, 5914041389, 5479874937, 7652431781, 6734269605] # pul qo‘sha oladiganlar
 
 # 🗄 DB
 conn = psycopg2.connect(DB_URL)
@@ -52,7 +52,6 @@ user_state = {}
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     user_id = message.from_user.id
-    # User ruxsatini tekshirish
     if user_id not in PERMITTED_USERS + ADMINS:
         await message.answer("❌ Sizda ruxsat yo‘q")
         return
@@ -66,10 +65,9 @@ async def start(message: types.Message):
 
     # Tugmalar tayyorlash
     kb = main_kb
-    text = "Xush kelibsiz!"
-    await message.answer(text, reply_markup=kb)
+    await message.answer("Xush kelibsiz!", reply_markup=kb)
 
-    # Agar admin bo‘lsa → admin panel qo‘shish
+    # Admin panel
     if user_id in ADMINS:
         admin_kb = InlineKeyboardMarkup(row_width=1)
         admin_kb.add(
@@ -88,11 +86,49 @@ async def save_name(message: types.Message):
     user_state.pop(message.from_user.id)
     await message.answer("✅ Saqlandi", reply_markup=main_kb)
 
+# ----- ADMIN SET LIMIT -----
+@dp.message_handler(commands=['setlimit'])
+async def set_limit_cmd(message: types.Message):
+    if message.from_user.id not in ADMINS:
+        await message.answer("❌ Siz admin emassiz")
+        return
+    try:
+        args = message.text.split()
+        if len(args) != 2:
+            await message.answer("❌ Format: /setlimit 5000000")
+            return
+        limit = int(args[1])
+        cur.execute("SELECT * FROM limits")
+        if cur.fetchone():
+            cur.execute("UPDATE limits SET total=%s", (limit,))
+        else:
+            cur.execute("INSERT INTO limits(total) VALUES (%s)", (limit,))
+        conn.commit()
+        await message.answer(f"✅ Limit o‘rnatildi: {limit}")
+    except:
+        await message.answer("❌ Faqat son yozing. Misol: /setlimit 5000000")
+
 # ----- PUL QO‘SHISH -----
+def get_remaining():
+    cur.execute("SELECT total FROM limits")
+    row = cur.fetchone()
+    total_limit = row[0] if row else None
+    if not total_limit:
+        return None, None
+    cur.execute("SELECT SUM(naqd+karta) FROM money")
+    current_total = cur.fetchone()[0] or 0
+    remaining = total_limit - current_total
+    return total_limit, remaining
+
 @dp.message_handler(lambda m: m.text=="➕ Pul qo‘shish")
 async def add_start(message: types.Message):
     if message.from_user.id not in PERMITTED_USERS:
         await message.answer("❌ Siz pul qo‘sha olmaysiz")
+        return
+    # Limitni tekshirish
+    _, remaining = get_remaining()
+    if remaining == 0:
+        await message.answer("⚠️ Limitga yetildi! Pul qo‘shish mumkin emas")
         return
     user_state[message.from_user.id] = "amount"
     await message.answer("💵 Summani yozing:")
@@ -114,33 +150,27 @@ async def save_money(message: types.Message):
         return
     amount = user_state[message.from_user.id]
     field = "naqd" if "Naqd" in message.text else "karta"
-    
+
+    # Limitni tekshirish
+    total_limit, remaining = get_remaining()
+    if total_limit is not None and amount > remaining:
+        await message.answer(f"⚠️ Siz {remaining} dan ko‘p qo‘sha olmaysiz!")
+        return
+
     cur.execute(f"UPDATE money SET {field} = {field} + %s WHERE user_id=%s", (amount, message.from_user.id))
     conn.commit()
     user_state.pop(message.from_user.id)
 
-    # 🔔 Adminlarga avtomatik xabar
+    # Adminlarga xabar
     cur.execute("SELECT name FROM users WHERE user_id=%s", (message.from_user.id,))
     user_name = cur.fetchone()[0]
     for admin_id in ADMINS:
         if admin_id != message.from_user.id:
             await bot.send_message(admin_id, f"👤 {user_name} {amount} qo‘shdi ({field})")
 
-    # 🔹 Limitni tekshirish
-    cur.execute("SELECT total FROM limits")
-    row = cur.fetchone()
-    total_limit = row[0] if row else None
-    cur.execute("SELECT SUM(naqd+karta) FROM money")
-    current_total = cur.fetchone()[0] or 0
-
-    if total_limit:
-        remaining = total_limit - current_total
-        await message.answer(f"✅ Qo‘shildi: {amount} ({field})\n💰 Qolgan limit: {remaining}", reply_markup=main_kb)
-        if remaining <= 0:
-            for admin_id in ADMINS:
-                await bot.send_message(admin_id, "⚠️ Limitga yetildi! Pul qo‘shishni to‘xtating!")
-    else:
-        await message.answer(f"✅ Qo‘shildi: {amount} ({field})", reply_markup=main_kb)
+    # Qolgan limitni ko‘rsatish
+    _, remaining = get_remaining()
+    await message.answer(f"✅ Qo‘shildi: {amount} ({field})\n💰 Qolgan limit: {remaining}", reply_markup=main_kb)
 
 # ----- HISOB -----
 @dp.message_handler(lambda m: m.text=="📊 Hisob")
@@ -201,15 +231,10 @@ async def chart(message: types.Message):
 # ----- QOLGAN LIMIT -----
 @dp.message_handler(lambda m: m.text=="💰 Qolgan limit")
 async def remaining_limit(message: types.Message):
-    cur.execute("SELECT total FROM limits")
-    row = cur.fetchone()
-    total_limit = row[0] if row else None
-    if not total_limit:
+    total_limit, remaining = get_remaining()
+    if total_limit is None:
         await message.answer("❌ Limit hali belgilanmagan")
         return
-    cur.execute("SELECT SUM(naqd+karta) FROM money")
-    current_total = cur.fetchone()[0] or 0
-    remaining = total_limit - current_total
     await message.answer(f"💰 Qolgan limit: {remaining}")
 
 # ----- ADMIN CALLBACKS -----
