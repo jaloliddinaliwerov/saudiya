@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 
 # 🔐 Admin va ruxsatli foydalanuvchilar
 ADMINS = [6734269605, 7652431781]  # adminlar IDlari
-PERMITTED_USERS = [123456789]  # pul qo‘sha oladiganlar
+PERMITTED_USERS = [7652431781, 5914041389, 5479874937, 7652431781, 6734269605]  # pul qo‘sha oladiganlar
 
 # 🗄 DB
 conn = psycopg2.connect(DB_URL)
