@@ -14,7 +14,7 @@ dp = Dispatcher(bot)
 logging.basicConfig(level=logging.INFO)
 
 # 🔐 ADMIN (faqat ID orqali)
-ADMINS = [123456789]
+ADMINS = [6734269605, 7652431781]
 
 def is_admin(user_id):
     return user_id in ADMINS
