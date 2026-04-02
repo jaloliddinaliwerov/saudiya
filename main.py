@@ -60,7 +60,36 @@ async def start(message: types.Message):
         user_state[message.from_user.id] = "name"
     else:
         await message.answer("Xush kelibsiz!", reply_markup=main_kb)
+# ----- ADMIN PANEL -----
+@dp.message_handler(commands=['admin'])
+async def admin_panel(message: types.Message):
+    if message.from_user.id not in ADMINS:
+        await message.answer("❌ Siz admin emassiz")
+        return
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("➕ Foydalanuvchi qo‘shish", callback_data="add_user"),
+        InlineKeyboardButton("💰 Limit o‘rnatish", callback_data="set_limit"),
+        InlineKeyboardButton("📊 Jami pul", callback_data="total_money")
+    )
+    await message.answer("🔹 Admin panel:", reply_markup=kb)
 
+# ----- CALLBACKS -----
+@dp.callback_query_handler(lambda c: c.data in ["add_user","set_limit","total_money"])
+async def process_admin_callback(callback: types.CallbackQuery):
+    if callback.from_user.id not in ADMINS:
+        await callback.answer("❌ Siz admin emassiz", show_alert=True)
+        return
+
+    if callback.data == "add_user":
+        await bot.send_message(callback.from_user.id, "Foydalanuvchi ID sini kiriting: /adduser 123456789")
+    elif callback.data == "set_limit":
+        await bot.send_message(callback.from_user.id, "Limitni kiriting: /setlimit 5000000")
+    elif callback.data == "total_money":
+        cur.execute("SELECT SUM(naqd+karta) FROM money")
+        total = cur.fetchone()[0] or 0
+        await bot.send_message(callback.from_user.id, f"💰 Jami yig‘ilgan pul: {total}")
+    await callback.answer()  # tugmani bosgandan keyin "loading" ni olib tashlaydi
 @dp.message_handler(lambda m: m.from_user.id in user_state and user_state[m.from_user.id]=="name")
 async def save_name(message: types.Message):
     cur.execute("INSERT INTO users VALUES (%s,%s)", (message.from_user.id, message.text))
